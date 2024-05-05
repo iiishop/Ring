@@ -195,6 +195,9 @@ else:
     listener = keyboard.Listener(on_press=on_alt_press, on_release=on_alt_release)
     listener.start()
 
+    on_alt_press(key=keyboard.Key.alt_l)
+    on_alt_release(key=keyboard.Key.alt_l)
+    
     update_label()  # 开始更新标签
 
     root.mainloop()
