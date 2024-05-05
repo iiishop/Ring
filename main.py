@@ -21,6 +21,7 @@ else:
     windwo = None
     screen_width = 192
     screen_height = 108
+    
 
     def get_mouse_position():
         x = root.winfo_pointerx()
@@ -44,6 +45,32 @@ else:
     def update_label():
         rel_x, rel_y = det_rel()
         mouse_position.set(f"相对位置: ({rel_x}, {rel_y})")
+        if(rel_x**2 + rel_y**2 < 50**2 and rel_x**2 + rel_y**2 > 30**2): 
+            next_Run.set("最大化")
+        elif(rel_x**2 + rel_y**2 > 50**2): #判断鼠标是否移动,距离为50
+            angle = math.degrees(math.acos(rel_x / math.sqrt(rel_x**2 + rel_y**2)))
+            if rel_x > 0 and rel_y > 0 or rel_x < 0 and rel_y > 0:
+                angle = 360 - angle
+            if(angle < 22.5 or angle > 337.5):
+                next_Run.set("右半屏")
+            elif(angle >=22.5 and angle < 67.5):
+                next_Run.set("右上角")
+            elif(angle >=67.5 and angle < 112.5):
+                next_Run.set("上半屏")
+            elif(angle >=112.5 and angle < 157.5):
+                next_Run.set("左上角")
+            elif(angle >=157.5 and angle < 202.5):
+                next_Run.set("左半屏")
+            elif(angle >=202.5 and angle < 247.5):
+                next_Run.set("左下角")
+            elif(angle >=247.5 and angle < 292.5):
+                next_Run.set("下半屏")
+            elif(angle >=292.5 and angle < 337.5):
+                next_Run.set("右下角")
+            else:
+                pass
+        else:
+            next_Run.set("无变换")
         root.after(100, update_label)  # 每100毫秒更新一次
 
     def on_alt_press(key):
@@ -68,7 +95,8 @@ else:
             rel_x, rel_y = det_rel()
             if(not active_window.title == "Ring"):
                 if(rel_x**2 + rel_y**2 < 50**2 and rel_x**2 + rel_y**2 > 30**2): 
-                    print("点击窗口")
+                    print("最大化窗口")
+                    next_Run.set("最大化")
                     active_window.maximize()
                 elif(rel_x**2 + rel_y**2 > 50**2): #判断鼠标是否移动,距离为50
                     angle = math.degrees(math.acos(rel_x / math.sqrt(rel_x**2 + rel_y**2)))
@@ -125,6 +153,8 @@ else:
                         active_window.moveTo(screen_width//2, screen_height//2)
                     else:
                         pass
+                else:
+                    pass
         
             sub_window.withdraw()
             alt_pressed = False
@@ -139,6 +169,9 @@ else:
     #root.attributes('-fullscreen', True)  # 全屏
     root.attributes('-alpha', 0)  # 设置透明度
     #root.overrideredirect(True)  # 去掉标题栏
+
+    next_Run = tk.StringVar()
+    next_Run.set("无变换")
 
     x = root.winfo_pointerx()
     y = root.winfo_pointery()
@@ -156,7 +189,7 @@ else:
     label.pack()
 
     # 创建一个按钮
-    button = tk.Button(sub_window, text="这是一个按钮", command=on_button_press)
+    button = tk.Button(sub_window, textvariable=next_Run, command=on_button_press)
     button.pack()
 
     listener = keyboard.Listener(on_press=on_alt_press, on_release=on_alt_release)
