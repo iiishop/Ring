@@ -4,3 +4,4 @@
 /dist
 /installvenv
 main.spec
+/__pycache__

@@ -7,6 +7,7 @@ import ctypes
 import sys
 import time
 import tools
+import RECT
 
 
 alt_pressed = False
@@ -38,7 +39,7 @@ def run():
         y = root.winfo_pointery()
         return x, y
 
-    def det_rel():
+    def get_rel():
         x, y = get_mouse_position()
         sub_center_x = sub_window.winfo_x() + sub_window.winfo_width() // 2
         sub_center_y = sub_window.winfo_y() + sub_window.winfo_height() // 2
@@ -52,11 +53,16 @@ def run():
                 return m
         return None
 
-    def get_work_area(monitor):
-        pass
+    def get_work_area():
+        monitor = get_mouse_monitor(*get_mouse_position())
+        rect = RECT.RECT()
+        ctypes.windll.user32.SystemParametersInfoW(48, 0, ctypes.byref(rect), 0)
+        work_area_width = rect.right - rect.left
+        work_area_height = rect.bottom - rect.top
+        return work_area_width, work_area_height
 
     def update_label():
-        rel_x, rel_y = det_rel()
+        rel_x, rel_y = get_rel()
         mouse_position.set(f"相对位置: ({rel_x}, {rel_y})")
         if (rel_x**2 + rel_y**2 < 50**2 and rel_x**2 + rel_y**2 > 30**2):
             next_Run.set("最大化")
@@ -79,8 +85,7 @@ def run():
             print("按下Alt键")
             active_window = gw.getActiveWindow()
             print(active_window.title)
-            screen_height = get_mouse_monitor(*get_mouse_position()).height
-            screen_width = get_mouse_monitor(*get_mouse_position()).width
+            screen_width, screen_height = get_work_area()
 
             x, y = get_mouse_position()
             sub_window.geometry(
@@ -97,7 +102,7 @@ def run():
         global alt_pressed
         if (key == keyboard.Key.alt_l):
             print("释放Alt键")
-            rel_x, rel_y = det_rel()
+            rel_x, rel_y = get_rel()
             if (not active_window.title == "Ring"):
                 if (rel_x**2 + rel_y**2 < 50**2 and rel_x**2 + rel_y**2 > 30**2):
                     print("最大化窗口")
