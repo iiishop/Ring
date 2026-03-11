@@ -3,6 +3,7 @@
 /build
 /dist
 /installvenv
+/.venv
 main.spec
 /__pycache__
 /.ruff_cache

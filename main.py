@@ -5,6 +5,7 @@ import pygetwindow as gw
 import ctypes
 import sys
 import RECT
+from ui import RingOverlayUI
 
 
 alt_pressed = False
@@ -59,8 +60,6 @@ def run():
     }
 
     ui_job = None
-    fade_job = None
-    current_alpha = 0.0
 
     def get_mouse_position():
         x = root.winfo_pointerx()
@@ -69,11 +68,7 @@ def run():
 
     def get_rel():
         x, y = get_mouse_position()
-        sub_center_x = sub_window.winfo_x() + sub_window.winfo_width() // 2
-        sub_center_y = sub_window.winfo_y() + sub_window.winfo_height() // 2
-        rel_x = x - sub_center_x
-        rel_y = y - sub_center_y
-        return rel_x, rel_y
+        return ui.get_rel(x, y)
 
     def get_work_area():
         monitor_default_to_nearest = 2
@@ -189,26 +184,6 @@ def run():
             return left, top, width, height
         return None
 
-    def update_target_preview(action):
-        if action == "none":
-            target_preview.withdraw()
-            return
-
-        rect = get_action_rect(action, current_work_area)
-        if rect is None:
-            target_preview.withdraw()
-            return
-
-        x, y, width, height = rect
-        if width <= 0 or height <= 0:
-            target_preview.withdraw()
-            return
-
-        target_preview.geometry(f"{width}x{height}+{x}+{y}")
-        target_preview.deiconify()
-        target_preview.lift()
-        sub_window.lift()
-
     def safe_window_title(window):
         if window is None:
             return ""
@@ -217,18 +192,8 @@ def run():
         except Exception:
             return ""
 
-    def set_preview(action, rel_x, rel_y):
-        icon_var.set(icons[action])
-        action_var.set(labels[action])
-        detail_var.set(f"相对位置: ({rel_x}, {rel_y})")
-        update_target_preview(action)
-
-        if action == "none":
-            action_label.configure(fg="#9aa7bd")
-        elif action == "maximize":
-            action_label.configure(fg="#6fd0ff")
-        else:
-            action_label.configure(fg="#8cf2a5")
+    def set_preview(action, show_target=True):
+        ui.set_preview(action, current_work_area, get_action_rect, show_target)
 
     def update_label_loop():
         nonlocal ui_job
@@ -237,7 +202,7 @@ def run():
             return
         rel_x, rel_y = get_rel()
         action = calculate_action(rel_x, rel_y)
-        set_preview(action, rel_x, rel_y)
+        set_preview(action)
         ui_job = root.after(33, update_label_loop)
 
     def start_label_loop():
@@ -251,45 +216,6 @@ def run():
             root.after_cancel(ui_job)
             ui_job = None
 
-    def animate_alpha(target_alpha, duration_ms=120, step_ms=10):
-        nonlocal fade_job, current_alpha
-
-        if fade_job is not None:
-            root.after_cancel(fade_job)
-            fade_job = None
-
-        start_alpha = current_alpha
-        steps = max(1, duration_ms // step_ms)
-        delta = (target_alpha - start_alpha) / steps
-
-        if target_alpha > 0:
-            sub_window.deiconify()
-
-        def step(index):
-            nonlocal fade_job, current_alpha
-            alpha = start_alpha + delta * index
-            alpha = max(0.0, min(1.0, alpha))
-            current_alpha = alpha
-            sub_window.attributes("-alpha", alpha)
-
-            if index < steps:
-                fade_job = root.after(step_ms, lambda: step(index + 1))
-            else:
-                fade_job = None
-                current_alpha = target_alpha
-                sub_window.attributes("-alpha", target_alpha)
-                if target_alpha <= 0:
-                    sub_window.withdraw()
-
-        step(1)
-
-    def center_sub_window_at_mouse():
-        x, y = get_mouse_position()
-        root.update_idletasks()
-        window_width = sub_window.winfo_width()
-        window_height = sub_window.winfo_height()
-        sub_window.geometry(f"+{x - window_width // 2}+{y - window_height // 2}")
-
     def handle_alt_press():
         global alt_pressed, active_window, current_work_area
         if alt_pressed:
@@ -300,11 +226,12 @@ def run():
         print(safe_window_title(active_window))
         current_work_area = get_work_area()
 
-        center_sub_window_at_mouse()
+        mouse_x, mouse_y = get_mouse_position()
+        ui.center_at(mouse_x, mouse_y)
         alt_pressed = True
-        set_preview("none", 0, 0)
+        set_preview("none")
         start_label_loop()
-        animate_alpha(1.0)
+        ui.show_panel()
 
     def handle_alt_release():
         global alt_pressed
@@ -313,17 +240,17 @@ def run():
 
         print("释放Alt键")
         stop_label_loop()
-        target_preview.withdraw()
+        ui.hide_target_preview()
 
         rel_x, rel_y = get_rel()
         action = calculate_action(rel_x, rel_y)
-        set_preview(action, rel_x, rel_y)
+        set_preview(action, show_target=False)
 
         if safe_window_title(active_window) != "Ring" and active_window is not None:
             print(labels[action])
             apply_window_action(active_window, action, current_work_area)
 
-        animate_alpha(0.0)
+        ui.hide_panel()
         alt_pressed = False
 
     def on_alt_press(key):
@@ -339,70 +266,7 @@ def run():
     root.attributes("-alpha", 0)  # 设置透明度
     root.geometry("1x1+0+0")
 
-    action_var = tk.StringVar(value=labels["none"])
-    detail_var = tk.StringVar(value="相对位置: (0, 0)")
-    icon_var = tk.StringVar(value=icons["none"])
-
-    sub_window = tk.Toplevel(root)
-    sub_window.attributes("-alpha", 0)
-    sub_window.overrideredirect(True)
-    sub_window.attributes("-topmost", 1)
-    sub_window.configure(bg="#0e141f")
-    sub_window.withdraw()
-
-    card = tk.Frame(
-        sub_window,
-        bg="#172233",
-        bd=0,
-        highlightthickness=1,
-        highlightbackground="#2c425f",
-        padx=16,
-        pady=12,
-    )
-    card.pack(padx=2, pady=2)
-
-    title_label = tk.Label(
-        card,
-        text="Ring Snap",
-        fg="#9ec7ff",
-        bg="#172233",
-        font=("Segoe UI Semibold", 10),
-    )
-    title_label.pack(anchor="w")
-
-    icon_label = tk.Label(
-        card,
-        textvariable=icon_var,
-        fg="#8cf2a5",
-        bg="#172233",
-        font=("Segoe UI Symbol", 26),
-    )
-    icon_label.pack(anchor="center", pady=(4, 0))
-
-    action_label = tk.Label(
-        card,
-        textvariable=action_var,
-        fg="#9aa7bd",
-        bg="#172233",
-        font=("Segoe UI Semibold", 13),
-    )
-    action_label.pack(anchor="center")
-
-    detail_label = tk.Label(
-        card,
-        textvariable=detail_var,
-        fg="#93a0b5",
-        bg="#172233",
-        font=("Consolas", 9),
-    )
-    detail_label.pack(anchor="center", pady=(4, 0))
-
-    target_preview = tk.Toplevel(root)
-    target_preview.overrideredirect(True)
-    target_preview.attributes("-topmost", 1)
-    target_preview.attributes("-alpha", 0.18)
-    target_preview.configure(bg="#6fd0ff")
-    target_preview.withdraw()
+    ui = RingOverlayUI(root, labels, icons)
 
     listener = keyboard.Listener(on_press=on_alt_press, on_release=on_alt_release)
     listener.start()
