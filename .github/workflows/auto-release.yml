@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   tag-and-release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
       - name: Checkout
@@ -18,13 +18,28 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
       - name: Generate tag
         id: tag
+        shell: pwsh
         run: |
-          TAG="v$(date -u +'%Y.%m.%d')-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          $tag = "v$(Get-Date -Format 'yyyy.MM.dd')-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller pyside6 pynput pygetwindow
+
+      - name: Build Windows executable
+        run: pyinstaller --noconfirm --clean Ring.spec
 
       - name: Create and push tag
+        shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -37,3 +52,4 @@ jobs:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: Release ${{ steps.tag.outputs.tag }}
           generate_release_notes: true
+          files: dist/Ring.exe
