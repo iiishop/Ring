@@ -265,7 +265,7 @@ def run():
         return float(refresh_rate)
 
     def get_frame_interval_ms(refresh_rate):
-        clamped_hz = max(60.0, min(165.0, refresh_rate))
+        clamped_hz = max(60.0, min(240.0, refresh_rate))
         return max(4, int(round(1000.0 / clamped_hz)))
 
     def rel_from_overlay_center():

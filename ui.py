@@ -23,6 +23,26 @@ def shortest_angle_lerp(a, b, t):
     return a + diff * t
 
 
+def smootherstep(t):
+    t = max(0.0, min(1.0, t))
+    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+
+
+def fbm_noise(t, phases):
+    value = 0.0
+    amplitude = 1.0
+    frequency = 1.0
+    norm = 0.0
+    for phase in phases:
+        value += amplitude * math.sin(t * frequency + phase)
+        norm += amplitude
+        frequency *= 2.03
+        amplitude *= 0.5
+    if norm <= 0:
+        return 0.0
+    return value / norm
+
+
 class LiquidOverlayWidget(QWidget):
     def __init__(self, labels, icons):
         super().__init__()
@@ -44,7 +64,7 @@ class LiquidOverlayWidget(QWidget):
         self._fade_steps_left = 0
         self._pulse_phase = 0.0
         self._frame_interval_ms = 16
-        self._transition_duration_ms = 85
+        self._transition_duration_ms = 92
         self._transition_elapsed_ms = self._transition_duration_ms
 
         self._action = "none"
@@ -95,6 +115,12 @@ class LiquidOverlayWidget(QWidget):
         self._marker_visible_from = 0.0
         self._marker_visible_to = 0.0
         self._marker_visible = 0.0
+
+        self._jitter_x = 0.0
+        self._jitter_y = 0.0
+        self._time_s = 0.0
+        self._noise_phases_x = (0.19, 1.17, 2.91, 4.63)
+        self._noise_phases_y = (0.83, 2.07, 3.71, 5.11)
 
         self._transition_t = 1.0
         self._transition_timer = QTimer(self)
@@ -188,7 +214,7 @@ class LiquidOverlayWidget(QWidget):
 
     def _start_fade(self, target_alpha):
         self._target_alpha = target_alpha
-        duration_ms = 90
+        duration_ms = 72
         steps = max(6, int(round(duration_ms / self._frame_interval_ms)))
         self._fade_steps_left = steps
         self._fade_step = (target_alpha - self._panel_alpha) / steps
@@ -213,7 +239,7 @@ class LiquidOverlayWidget(QWidget):
     def _on_transition_tick(self):
         self._transition_elapsed_ms += self._frame_interval_ms
         linear_t = min(1.0, self._transition_elapsed_ms / self._transition_duration_ms)
-        self._transition_t = linear_t * linear_t * (3.0 - 2.0 * linear_t)
+        self._transition_t = smootherstep(linear_t)
         self._accent = lerp_color(
             self._accent_from, self._accent_to, self._transition_t
         )
@@ -231,7 +257,18 @@ class LiquidOverlayWidget(QWidget):
             self._transition_timer.stop()
 
     def _on_pulse_tick(self):
-        self._pulse_phase += (self._frame_interval_ms / 1000.0) * 2.35
+        dt = self._frame_interval_ms / 1000.0
+        self._pulse_phase += dt * 2.35
+        self._time_s += dt
+
+        jitter_amp = 0.72
+        self._jitter_x = (
+            fbm_noise(self._time_s * 0.85, self._noise_phases_x) * jitter_amp
+        )
+        self._jitter_y = (
+            fbm_noise(self._time_s * 0.92 + 13.0, self._noise_phases_y) * jitter_amp
+        )
+
         self.update()
 
     def paintEvent(self, _event):
@@ -242,7 +279,9 @@ class LiquidOverlayWidget(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         p.setOpacity(self._panel_alpha)
 
-        center = QPoint(self.width() // 2, self.height() // 2)
+        center_x = self.width() / 2.0 + self._jitter_x
+        center_y = self.height() / 2.0 + self._jitter_y
+        center = QPoint(int(center_x), int(center_y))
         wave = math.sin(self._pulse_phase)
         micro = math.sin(self._pulse_phase * 0.5 + 1.1)
         pulse = (wave * 0.75 + micro * 0.25 + 1.0) * 0.5
@@ -276,7 +315,13 @@ class LiquidOverlayWidget(QWidget):
             marker_radius = max(
                 6.0, min(self._marker_rect.width(), self._marker_rect.height()) * 0.45
             )
-            p.drawRoundedRect(self._marker_rect, marker_radius, marker_radius)
+            marker = QRectF(
+                self._marker_rect.x() + self._jitter_x * 0.35,
+                self._marker_rect.y() + self._jitter_y * 0.35,
+                self._marker_rect.width(),
+                self._marker_rect.height(),
+            )
+            p.drawRoundedRect(marker, marker_radius, marker_radius)
 
         if self._action == "maximize":
             p.setPen(
@@ -340,7 +385,7 @@ class TargetPreviewWidget(QWidget):
         self._to_rect = QRectF(0, 0, 0, 0)
         self._target_rect = QRectF(0, 0, 0, 0)
         self._rect_t = 1.0
-        self._rect_duration_ms = 90
+        self._rect_duration_ms = 82
         self._rect_elapsed_ms = self._rect_duration_ms
         self._is_morphing = False
 
@@ -412,7 +457,7 @@ class TargetPreviewWidget(QWidget):
     def _on_anim_tick(self):
         dt = self._frame_interval_ms / 1000.0
 
-        alpha_tau = 0.04
+        alpha_tau = 0.036
         alpha_blend = 1.0 - math.exp(-dt / alpha_tau)
         self._opacity = (
             self._opacity + (self._target_opacity - self._opacity) * alpha_blend
@@ -425,7 +470,7 @@ class TargetPreviewWidget(QWidget):
         if self._is_morphing:
             self._rect_elapsed_ms += self._frame_interval_ms
             linear_t = min(1.0, self._rect_elapsed_ms / self._rect_duration_ms)
-            eased_t = linear_t * linear_t * (3.0 - 2.0 * linear_t)
+            eased_t = smootherstep(linear_t)
             self._current_rect = QRectF(
                 lerp(self._from_rect.x(), self._to_rect.x(), eased_t),
                 lerp(self._from_rect.y(), self._to_rect.y(), eased_t),
