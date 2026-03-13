@@ -89,6 +89,13 @@ class LiquidOverlayWidget(QWidget):
         self._angle_from = self._angle
         self._angle_to = self._angle
 
+        self._marker_from = QRectF(0, 0, 0, 0)
+        self._marker_to = QRectF(0, 0, 0, 0)
+        self._marker_rect = QRectF(0, 0, 0, 0)
+        self._marker_visible_from = 0.0
+        self._marker_visible_to = 0.0
+        self._marker_visible = 0.0
+
         self._transition_t = 1.0
         self._transition_timer = QTimer(self)
         self._transition_timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -103,6 +110,42 @@ class LiquidOverlayWidget(QWidget):
         self._pulse_timer.timeout.connect(self._on_pulse_tick)
 
         self.hide()
+
+    def _marker_target_rect(self, action):
+        c = self.width() / 2.0
+        if action == "none":
+            return QRectF(c, c, 0, 0), 0.0
+        if action == "center_float":
+            return QRectF(c - 17, c - 17, 34, 34), 1.0
+        if action == "center_one_third":
+            return QRectF(c - 9, c - 34, 18, 68), 1.0
+        if action == "maximize":
+            return QRectF(c - 20, c - 20, 40, 40), 1.0
+
+        marker_map = {
+            "left_one_third": QRectF(c - 48, c - 34, 14, 68),
+            "left_half": QRectF(c - 36, c - 32, 18, 64),
+            "left_two_thirds": QRectF(c - 24, c - 30, 22, 60),
+            "right_one_third": QRectF(c + 34, c - 34, 14, 68),
+            "right_half": QRectF(c + 18, c - 32, 18, 64),
+            "right_two_thirds": QRectF(c + 2, c - 30, 22, 60),
+            "top_half": QRectF(c - 32, c - 36, 64, 18),
+            "bottom_half": QRectF(c - 32, c + 18, 64, 18),
+            "top_left": QRectF(c - 42, c - 42, 22, 22),
+            "top_right": QRectF(c + 20, c - 42, 22, 22),
+            "bottom_left": QRectF(c - 42, c + 20, 22, 22),
+            "bottom_right": QRectF(c + 20, c + 20, 22, 22),
+        }
+        return marker_map.get(action, QRectF(c, c, 0, 0)), 1.0
+
+    @staticmethod
+    def _lerp_rect(a, b, t):
+        return QRectF(
+            lerp(a.x(), b.x(), t),
+            lerp(a.y(), b.y(), t),
+            lerp(a.width(), b.width(), t),
+            lerp(a.height(), b.height(), t),
+        )
 
     def center_at(self, mouse_pos):
         self.move(mouse_pos.x() - self.width() // 2, mouse_pos.y() - self.height() // 2)
@@ -120,6 +163,10 @@ class LiquidOverlayWidget(QWidget):
 
         self._angle_from = self._angle
         self._angle_to = self._angle_map.get(action, self._angle)
+
+        self._marker_from = QRectF(self._marker_rect)
+        self._marker_visible_from = self._marker_visible
+        self._marker_to, self._marker_visible_to = self._marker_target_rect(action)
 
         self._transition_t = 0.0
         self._transition_elapsed_ms = 0
@@ -173,6 +220,12 @@ class LiquidOverlayWidget(QWidget):
         self._angle = shortest_angle_lerp(
             self._angle_from, self._angle_to, self._transition_t
         )
+        self._marker_rect = self._lerp_rect(
+            self._marker_from, self._marker_to, self._transition_t
+        )
+        self._marker_visible = lerp(
+            self._marker_visible_from, self._marker_visible_to, self._transition_t
+        )
         self.update()
         if self._transition_t >= 1.0:
             self._transition_timer.stop()
@@ -213,6 +266,18 @@ class LiquidOverlayWidget(QWidget):
         p.setPen(QPen(core_color, 1))
         p.drawEllipse(center, inner_r, inner_r)
 
+        if self._marker_visible > 0.01:
+            marker_fill = QColor(self._accent)
+            marker_fill.setAlpha(int(40 + self._marker_visible * 80))
+            marker_line = QColor(self._accent)
+            marker_line.setAlpha(int(120 + self._marker_visible * 110))
+            p.setBrush(marker_fill)
+            p.setPen(QPen(marker_line, 2))
+            marker_radius = max(
+                6.0, min(self._marker_rect.width(), self._marker_rect.height()) * 0.45
+            )
+            p.drawRoundedRect(self._marker_rect, marker_radius, marker_radius)
+
         if self._action == "maximize":
             p.setPen(
                 QPen(
@@ -226,43 +291,7 @@ class LiquidOverlayWidget(QWidget):
                 )
             )
             p.drawEllipse(center, int(main_r), int(main_r))
-        elif self._action == "center_float":
-            p.setPen(
-                QPen(
-                    QColor(
-                        self._accent.red(),
-                        self._accent.green(),
-                        self._accent.blue(),
-                        220,
-                    ),
-                    2,
-                )
-            )
-            p.setBrush(
-                QColor(
-                    self._accent.red(), self._accent.green(), self._accent.blue(), 60
-                )
-            )
-            p.drawEllipse(center, 11, 11)
-        elif self._action == "center_one_third":
-            p.setPen(
-                QPen(
-                    QColor(
-                        self._accent.red(),
-                        self._accent.green(),
-                        self._accent.blue(),
-                        220,
-                    ),
-                    3,
-                )
-            )
-            p.setBrush(
-                QColor(
-                    self._accent.red(), self._accent.green(), self._accent.blue(), 48
-                )
-            )
-            p.drawRoundedRect(QRect(center.x() - 10, center.y() - 36, 20, 72), 9, 9)
-        elif self._action != "none":
+        elif self._action not in ("none", "center_float", "center_one_third"):
             arc_rect = QRectF(
                 center.x() - main_r,
                 center.y() - main_r,
