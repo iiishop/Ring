@@ -1,55 +1,72 @@
-name: Auto Tag And Release
+name: Build and Release
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  tag-and-release:
+  build-and-release:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Generate tag
-        id: tag
-        shell: pwsh
-        run: |
-          $tag = "v$(Get-Date -Format 'yyyy.MM.dd')-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
-          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-
       - name: Install build dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pyinstaller pyside6 pynput pygetwindow
+          pip install --upgrade pip
+          pip install pyinstaller pyside6 pynput pygetwindow
 
       - name: Build Windows executable
         run: pyinstaller --noconfirm --clean Ring.spec
 
-      - name: Create and push tag
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ring-exe
+          path: dist/Ring.exe
+
+      - name: Build installer
+        if: github.ref_type == 'tag'
         shell: pwsh
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.tag.outputs.tag }}" -m "Auto release ${{ steps.tag.outputs.tag }}"
-          git push origin "${{ steps.tag.outputs.tag }}"
+          choco install nsis --no-progress
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          makensis "/DVERSION=$version" installer\Ring.nsi
 
-      - name: Create GitHub release
+      - name: Generate changelog
+        if: github.ref_type == 'tag'
+        id: changelog
+        shell: pwsh
+        run: |
+          $lastTag = git describe --tags --abbrev=0 2>$null
+          if ($lastTag) {
+            $log = git log "$lastTag..HEAD" --oneline --no-merges
+          } else {
+            $log = git log --oneline --no-merges
+          }
+          $body = "## What's Changed`n`n$log"
+          Set-Content -Path changelog.md -Value $body
+          "path=changelog.md" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
-          generate_release_notes: true
-          files: dist/Ring.exe
+          tag_name: ${{ github.ref_name }}
+          name: Ring ${{ github.ref_name }}
+          body_path: ${{ steps.changelog.outputs.path }}
+          files: |
+            dist/Ring.exe
+            Ring-*.exe
