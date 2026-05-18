@@ -355,6 +355,7 @@ def run():
     alt_triggered = False
 
     def on_press(key):
+        nonlocal alt_triggered
         pressed_keys.add(key)
         if key == keyboard.Key.alt_l:
             alt_triggered = True
