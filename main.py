@@ -5,8 +5,8 @@ import sys
 import pygetwindow as gw
 from pynput import keyboard
 from PySide6.QtCore import QObject, QPoint, Qt, Signal, QTimer
-from PySide6.QtGui import QCursor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QAction, QCursor, QIcon
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 import RECT
 from ui import LiquidOverlayWidget, TargetPreviewWidget
@@ -202,6 +202,13 @@ def safe_window_title(window):
         return ""
 
 
+def _asset_path(filename):
+    if getattr(sys, "frozen", False):
+        import os
+        return os.path.join(sys._MEIPASS, filename)
+    return filename
+
+
 def run():
     labels = {
         "top_right": "右上角",
@@ -241,6 +248,17 @@ def run():
     }
 
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+
+    tray = QSystemTrayIcon()
+    tray.setIcon(QIcon(_asset_path("logo.png")))
+    tray.setToolTip("Ring")
+    menu = QMenu()
+    quit_action = menu.addAction("退出")
+    quit_action.triggered.connect(app.quit)
+    tray.setContextMenu(menu)
+    tray.show()
+
     bridge = HotkeyBridge()
     overlay = LiquidOverlayWidget(labels, icons)
     preview = TargetPreviewWidget()
