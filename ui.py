@@ -52,7 +52,7 @@ def spring_done(current, target, velocity, pos_eps=0.01, vel_eps=0.01):
 class LiquidOverlayWidget(QWidget):
     HYSTERESIS_FRAMES = 3
     SPRING_STIFFNESS = 200.0
-    SPRING_DAMPING = 20.0
+    SPRING_DAMPING = 26.0
 
     def __init__(self, labels, icons):
         super().__init__()
@@ -269,10 +269,10 @@ class LiquidOverlayWidget(QWidget):
             self._accent_velocity[index] = velocity
 
         self._accent = QColor(
-            int(round(self._accent_rgba[0])),
-            int(round(self._accent_rgba[1])),
-            int(round(self._accent_rgba[2])),
-            int(round(self._accent_rgba[3])),
+            max(0, min(255, int(round(self._accent_rgba[0])))),
+            max(0, min(255, int(round(self._accent_rgba[1])))),
+            max(0, min(255, int(round(self._accent_rgba[2])))),
+            max(0, min(255, int(round(self._accent_rgba[3])))),
         )
 
         angle_target = self._angle + shortest_angle_delta(self._angle, self._angle_target)
@@ -486,7 +486,7 @@ class LiquidOverlayWidget(QWidget):
 
 class TargetPreviewWidget(QWidget):
     SPRING_STIFFNESS = 200.0
-    SPRING_DAMPING = 20.0
+    SPRING_DAMPING = 26.0
 
     def __init__(self):
         super().__init__()
