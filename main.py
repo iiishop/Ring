@@ -365,6 +365,7 @@ def run():
             bridge.alt_cancelled.emit()
 
     def on_release(key):
+        nonlocal alt_triggered
         pressed_keys.discard(key)
         if key == keyboard.Key.alt_l and alt_triggered:
             alt_triggered = False
