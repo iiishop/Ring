@@ -28,7 +28,7 @@ jobs:
           pip install pyinstaller pyside6 pynput pygetwindow
 
       - name: Build Windows executable
-        run: pyinstaller --noconfirm --clean Ring.spec
+        run: pyinstaller --noconfirm --clean --windowed Ring.spec
 
       - name: Upload exe artifact
         uses: actions/upload-artifact@v4
