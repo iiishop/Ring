@@ -2,13 +2,13 @@
 !define PRODUCT_PUBLISHER "iiishop"
 
 Name "${PRODUCT_NAME} ${VERSION}"
-OutFile "Ring-${VERSION}-Setup.exe"
+OutFile "..\Ring-${VERSION}-Setup.exe"
 InstallDir "$PROGRAMFILES\${PRODUCT_NAME}"
 RequestExecutionLevel admin
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File "dist\Ring.exe"
+  File "Ring.exe"
 
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Ring.lnk" "$INSTDIR\Ring.exe"
