@@ -28,6 +28,7 @@ class MONITORINFO(ctypes.Structure):
 class HotkeyBridge(QObject):
     alt_pressed = Signal()
     alt_released = Signal()
+    alt_cancelled = Signal()
 
 
 def is_admin():
@@ -320,6 +321,14 @@ def run():
         overlay.show_animated()
         update_timer.start()
 
+    def handle_alt_cancel():
+        if not state["alt_pressed"]:
+            return
+        update_timer.stop()
+        preview.hide_preview()
+        overlay.hide_animated()
+        state["alt_pressed"] = False
+
     def handle_alt_release():
         if not state["alt_pressed"]:
             return
@@ -340,17 +349,24 @@ def run():
 
     bridge.alt_pressed.connect(handle_alt_press)
     bridge.alt_released.connect(handle_alt_release)
+    bridge.alt_cancelled.connect(handle_alt_cancel)
 
-    key_state = {"alt_down": False}
+    pressed_keys = set()
+    alt_triggered = False
 
     def on_press(key):
-        if key == keyboard.Key.alt_l and not key_state["alt_down"]:
-            key_state["alt_down"] = True
-            bridge.alt_pressed.emit()
+        pressed_keys.add(key)
+        if key == keyboard.Key.alt_l:
+            alt_triggered = True
+            if len(pressed_keys) == 1:
+                bridge.alt_pressed.emit()
+        elif alt_triggered:
+            bridge.alt_cancelled.emit()
 
     def on_release(key):
-        if key == keyboard.Key.alt_l and key_state["alt_down"]:
-            key_state["alt_down"] = False
+        pressed_keys.discard(key)
+        if key == keyboard.Key.alt_l and alt_triggered:
+            alt_triggered = False
             bridge.alt_released.emit()
 
     listener = keyboard.Listener(on_press=on_press, on_release=on_release)
