@@ -1,6 +1,6 @@
 import math
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QTimer, Qt
+from PySide6.QtCore import QElapsedTimer, QPoint, QRect, QRectF, QTimer, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -18,14 +18,8 @@ def lerp_color(a, b, t):
     )
 
 
-def shortest_angle_lerp(a, b, t):
-    diff = (b - a + math.pi) % (2 * math.pi) - math.pi
-    return a + diff * t
-
-
-def smootherstep(t):
-    t = max(0.0, min(1.0, t))
-    return t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+def shortest_angle_delta(current, target):
+    return (target - current + math.pi) % (2 * math.pi) - math.pi
 
 
 def fbm_noise(t, phases):
@@ -43,7 +37,23 @@ def fbm_noise(t, phases):
     return value / norm
 
 
+def spring_update(current, target, velocity, stiffness, damping, dt):
+    force = -stiffness * (current - target)
+    velocity += force * dt
+    velocity *= math.exp(-damping * dt)
+    current += velocity * dt
+    return current, velocity
+
+
+def spring_done(current, target, velocity, pos_eps=0.01, vel_eps=0.01):
+    return abs(current - target) <= pos_eps and abs(velocity) <= vel_eps
+
+
 class LiquidOverlayWidget(QWidget):
+    HYSTERESIS_FRAMES = 3
+    SPRING_STIFFNESS = 200.0
+    SPRING_DAMPING = 20.0
+
     def __init__(self, labels, icons):
         super().__init__()
         self.labels = labels
@@ -60,14 +70,16 @@ class LiquidOverlayWidget(QWidget):
 
         self._panel_alpha = 0.0
         self._target_alpha = 0.0
-        self._fade_step = 0.0
-        self._fade_steps_left = 0
+        self._fade_from_alpha = 0.0
+        self._fade_elapsed_s = 0.0
+        self._fade_duration_s = 0.072
+        self._is_fading = False
         self._pulse_phase = 0.0
         self._frame_interval_ms = 16
-        self._transition_duration_ms = 92
-        self._transition_elapsed_ms = self._transition_duration_ms
 
         self._action = "none"
+        self._candidate_action = "none"
+        self._candidate_frames = 0
         self._color_map = {
             "top_right": QColor("#93c5fd"),
             "top_half": QColor("#7dd3fc"),
@@ -87,8 +99,14 @@ class LiquidOverlayWidget(QWidget):
             "none": QColor("#94a3b8"),
         }
         self._accent = QColor(self._color_map["none"])
-        self._accent_from = QColor(self._accent)
-        self._accent_to = QColor(self._accent)
+        self._accent_rgba = [
+            float(self._accent.red()),
+            float(self._accent.green()),
+            float(self._accent.blue()),
+            float(self._accent.alpha()),
+        ]
+        self._accent_target_rgba = list(self._accent_rgba)
+        self._accent_velocity = [0.0, 0.0, 0.0, 0.0]
 
         self._angle_map = {
             "top_half": -math.pi / 2,
@@ -106,15 +124,15 @@ class LiquidOverlayWidget(QWidget):
             "top_left": -3 * math.pi / 4,
         }
         self._angle = -math.pi / 2
-        self._angle_from = self._angle
-        self._angle_to = self._angle
+        self._angle_target = self._angle
+        self._angle_velocity = 0.0
 
-        self._marker_from = QRectF(0, 0, 0, 0)
-        self._marker_to = QRectF(0, 0, 0, 0)
         self._marker_rect = QRectF(0, 0, 0, 0)
-        self._marker_visible_from = 0.0
-        self._marker_visible_to = 0.0
+        self._marker_rect_target = QRectF(0, 0, 0, 0)
+        self._marker_rect_velocity = [0.0, 0.0, 0.0, 0.0]
         self._marker_visible = 0.0
+        self._marker_visible_target = 0.0
+        self._marker_visible_velocity = 0.0
 
         self._jitter_x = 0.0
         self._jitter_y = 0.0
@@ -122,18 +140,10 @@ class LiquidOverlayWidget(QWidget):
         self._noise_phases_x = (0.19, 1.17, 2.91, 4.63)
         self._noise_phases_y = (0.83, 2.07, 3.71, 5.11)
 
-        self._transition_t = 1.0
-        self._transition_timer = QTimer(self)
-        self._transition_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._transition_timer.timeout.connect(self._on_transition_tick)
-
-        self._fade_timer = QTimer(self)
-        self._fade_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._fade_timer.timeout.connect(self._on_fade_tick)
-
-        self._pulse_timer = QTimer(self)
-        self._pulse_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self._pulse_timer.timeout.connect(self._on_pulse_tick)
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._refresh_timer.timeout.connect(self._on_refresh_tick)
+        self._elapsed = QElapsedTimer()
 
         self.hide()
 
@@ -164,15 +174,6 @@ class LiquidOverlayWidget(QWidget):
         }
         return marker_map.get(action, QRectF(c, c, 0, 0)), 1.0
 
-    @staticmethod
-    def _lerp_rect(a, b, t):
-        return QRectF(
-            lerp(a.x(), b.x(), t),
-            lerp(a.y(), b.y(), t),
-            lerp(a.width(), b.width(), t),
-            lerp(a.height(), b.height(), t),
-        )
-
     def center_at(self, mouse_pos):
         self.move(mouse_pos.x() - self.width() // 2, mouse_pos.y() - self.height() // 2)
 
@@ -184,92 +185,212 @@ class LiquidOverlayWidget(QWidget):
             return
 
         self._action = action
-        self._accent_from = QColor(self._accent)
-        self._accent_to = QColor(self._color_map.get(action, self._color_map["none"]))
+        self._candidate_action = action
+        self._candidate_frames = self.HYSTERESIS_FRAMES
+        accent = self._color_map.get(action, self._color_map["none"])
+        self._accent_target_rgba = [
+            float(accent.red()),
+            float(accent.green()),
+            float(accent.blue()),
+            float(accent.alpha()),
+        ]
+        self._angle_target = self._angle_map.get(action, self._angle)
+        self._marker_rect_target, self._marker_visible_target = self._marker_target_rect(
+            action
+        )
+        self._ensure_refresh_running()
 
-        self._angle_from = self._angle
-        self._angle_to = self._angle_map.get(action, self._angle)
+    def set_action_stable(self, action):
+        if action == self._candidate_action:
+            self._candidate_frames += 1
+        else:
+            self._candidate_action = action
+            self._candidate_frames = 1
 
-        self._marker_from = QRectF(self._marker_rect)
-        self._marker_visible_from = self._marker_visible
-        self._marker_to, self._marker_visible_to = self._marker_target_rect(action)
-
-        self._transition_t = 0.0
-        self._transition_elapsed_ms = 0
-        self._transition_timer.start(self._frame_interval_ms)
+        if (
+            self._candidate_frames >= self.HYSTERESIS_FRAMES
+            and action != self._action
+        ):
+            self.set_action(action)
 
     def set_refresh_rate(self, hz):
         clamped_hz = max(60.0, min(240.0, float(hz)))
         self._frame_interval_ms = max(4, int(round(1000.0 / clamped_hz)))
+        if self._refresh_timer.isActive():
+            self._refresh_timer.start(self._frame_interval_ms)
 
     def accent_color(self):
         return QColor(self._accent)
 
     def show_animated(self):
-        self._pulse_timer.start(self._frame_interval_ms)
+        if self._panel_alpha <= 0.0 and self._target_alpha <= 0.0 and self._action != "none":
+            self.set_action("none")
         self._start_fade(1.0)
 
     def hide_animated(self):
         self._start_fade(0.0)
 
     def _start_fade(self, target_alpha):
+        self._fade_from_alpha = self._panel_alpha
         self._target_alpha = target_alpha
-        duration_ms = 72
-        steps = max(6, int(round(duration_ms / self._frame_interval_ms)))
-        self._fade_steps_left = steps
-        self._fade_step = (target_alpha - self._panel_alpha) / steps
+        self._fade_elapsed_s = 0.0
+        self._is_fading = True
         if target_alpha > 0:
             self.show()
-        self._fade_timer.start(self._frame_interval_ms)
+        self._ensure_refresh_running()
 
-    def _on_fade_tick(self):
-        if self._fade_steps_left <= 0:
-            self._panel_alpha = self._target_alpha
-            self._fade_timer.stop()
-            if self._panel_alpha <= 0:
-                self._pulse_timer.stop()
-                self.hide()
-            self.update()
+    def _ensure_refresh_running(self):
+        if self._refresh_timer.isActive():
             return
+        self._elapsed.restart()
+        self._refresh_timer.start(self._frame_interval_ms)
 
-        self._panel_alpha = max(0.0, min(1.0, self._panel_alpha + self._fade_step))
-        self._fade_steps_left -= 1
-        self.update()
+    def _update_springs(self, dt):
+        active = False
 
-    def _on_transition_tick(self):
-        self._transition_elapsed_ms += self._frame_interval_ms
-        linear_t = min(1.0, self._transition_elapsed_ms / self._transition_duration_ms)
-        self._transition_t = smootherstep(linear_t)
-        self._accent = lerp_color(
-            self._accent_from, self._accent_to, self._transition_t
-        )
-        self._angle = shortest_angle_lerp(
-            self._angle_from, self._angle_to, self._transition_t
-        )
-        self._marker_rect = self._lerp_rect(
-            self._marker_from, self._marker_to, self._transition_t
-        )
-        self._marker_visible = lerp(
-            self._marker_visible_from, self._marker_visible_to, self._transition_t
-        )
-        self.update()
-        if self._transition_t >= 1.0:
-            self._transition_timer.stop()
+        for index in range(4):
+            current = self._accent_rgba[index]
+            target = self._accent_target_rgba[index]
+            velocity = self._accent_velocity[index]
+            current, velocity = spring_update(
+                current,
+                target,
+                velocity,
+                self.SPRING_STIFFNESS,
+                self.SPRING_DAMPING,
+                dt,
+            )
+            if spring_done(current, target, velocity, pos_eps=0.35, vel_eps=1.0):
+                current = target
+                velocity = 0.0
+            else:
+                active = True
+            self._accent_rgba[index] = current
+            self._accent_velocity[index] = velocity
 
-    def _on_pulse_tick(self):
-        dt = self._frame_interval_ms / 1000.0
-        self._pulse_phase += dt * 2.35
-        self._time_s += dt
-
-        jitter_amp = 0.72
-        self._jitter_x = (
-            fbm_noise(self._time_s * 0.85, self._noise_phases_x) * jitter_amp
-        )
-        self._jitter_y = (
-            fbm_noise(self._time_s * 0.92 + 13.0, self._noise_phases_y) * jitter_amp
+        self._accent = QColor(
+            int(round(self._accent_rgba[0])),
+            int(round(self._accent_rgba[1])),
+            int(round(self._accent_rgba[2])),
+            int(round(self._accent_rgba[3])),
         )
 
-        self.update()
+        angle_target = self._angle + shortest_angle_delta(self._angle, self._angle_target)
+        self._angle, self._angle_velocity = spring_update(
+            self._angle,
+            angle_target,
+            self._angle_velocity,
+            self.SPRING_STIFFNESS,
+            self.SPRING_DAMPING,
+            dt,
+        )
+        if spring_done(
+            self._angle,
+            angle_target,
+            self._angle_velocity,
+            pos_eps=0.002,
+            vel_eps=0.01,
+        ):
+            self._angle = angle_target
+            self._angle_velocity = 0.0
+        else:
+            active = True
+        self._angle = ((self._angle + math.pi) % (2 * math.pi)) - math.pi
+
+        rect_values = [
+            self._marker_rect.x(),
+            self._marker_rect.y(),
+            self._marker_rect.width(),
+            self._marker_rect.height(),
+        ]
+        target_values = [
+            self._marker_rect_target.x(),
+            self._marker_rect_target.y(),
+            self._marker_rect_target.width(),
+            self._marker_rect_target.height(),
+        ]
+        next_values = []
+        for index in range(4):
+            current, velocity = spring_update(
+                rect_values[index],
+                target_values[index],
+                self._marker_rect_velocity[index],
+                self.SPRING_STIFFNESS,
+                self.SPRING_DAMPING,
+                dt,
+            )
+            if spring_done(current, target_values[index], velocity, pos_eps=0.2, vel_eps=0.5):
+                current = target_values[index]
+                velocity = 0.0
+            else:
+                active = True
+            next_values.append(current)
+            self._marker_rect_velocity[index] = velocity
+        self._marker_rect = QRectF(*next_values)
+
+        self._marker_visible, self._marker_visible_velocity = spring_update(
+            self._marker_visible,
+            self._marker_visible_target,
+            self._marker_visible_velocity,
+            self.SPRING_STIFFNESS,
+            self.SPRING_DAMPING,
+            dt,
+        )
+        if spring_done(
+            self._marker_visible,
+            self._marker_visible_target,
+            self._marker_visible_velocity,
+            pos_eps=0.01,
+            vel_eps=0.02,
+        ):
+            self._marker_visible = self._marker_visible_target
+            self._marker_visible_velocity = 0.0
+        else:
+            active = True
+
+        return active
+
+    def _on_refresh_tick(self):
+        elapsed_ms = self._elapsed.restart() if self._elapsed.isValid() else 0
+        dt = max(0.0, min(0.05, elapsed_ms / 1000.0))
+        if dt <= 0.0:
+            dt = self._frame_interval_ms / 1000.0
+
+        needs_update = False
+
+        if self._is_fading:
+            self._fade_elapsed_s += dt
+            t = min(1.0, self._fade_elapsed_s / self._fade_duration_s)
+            self._panel_alpha = lerp(self._fade_from_alpha, self._target_alpha, t)
+            if t >= 1.0:
+                self._panel_alpha = self._target_alpha
+                self._is_fading = False
+            needs_update = True
+
+        if self._panel_alpha > 0.0:
+            self._pulse_phase += dt * 2.35
+            self._time_s += dt
+
+            jitter_amp = 0.72
+            self._jitter_x = (
+                fbm_noise(self._time_s * 0.85, self._noise_phases_x) * jitter_amp
+            )
+            self._jitter_y = (
+                fbm_noise(self._time_s * 0.92 + 13.0, self._noise_phases_y) * jitter_amp
+            )
+            needs_update = True
+
+        springs_active = self._update_springs(dt)
+        needs_update = needs_update or springs_active
+
+        if self._panel_alpha <= 0.0 and self._target_alpha <= 0.0 and not self._is_fading:
+            self._panel_alpha = 0.0
+            self.hide()
+            if not springs_active:
+                self._refresh_timer.stop()
+
+        if needs_update:
+            self.update()
 
     def paintEvent(self, _event):
         if self._panel_alpha <= 0:
@@ -364,6 +485,9 @@ class LiquidOverlayWidget(QWidget):
 
 
 class TargetPreviewWidget(QWidget):
+    SPRING_STIFFNESS = 200.0
+    SPRING_DAMPING = 20.0
+
     def __init__(self):
         super().__init__()
         self.setWindowFlags(
@@ -381,23 +505,22 @@ class TargetPreviewWidget(QWidget):
         self._frame_interval_ms = 16
 
         self._current_rect = QRectF(0, 0, 0, 0)
-        self._from_rect = QRectF(0, 0, 0, 0)
-        self._to_rect = QRectF(0, 0, 0, 0)
         self._target_rect = QRectF(0, 0, 0, 0)
-        self._rect_t = 1.0
-        self._rect_duration_ms = 82
-        self._rect_elapsed_ms = self._rect_duration_ms
+        self._rect_velocity = [0.0, 0.0, 0.0, 0.0]
         self._is_morphing = False
 
         self._anim_timer = QTimer(self)
         self._anim_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self._anim_timer.timeout.connect(self._on_anim_tick)
+        self._elapsed = QElapsedTimer()
 
         self.hide()
 
     def set_refresh_rate(self, hz):
         clamped_hz = max(60.0, min(240.0, float(hz)))
         self._frame_interval_ms = max(4, int(round(1000.0 / clamped_hz)))
+        if self._anim_timer.isActive():
+            self._anim_timer.start(self._frame_interval_ms)
 
     @staticmethod
     def _rect_almost_equal(a, b, eps=0.6):
@@ -421,6 +544,7 @@ class TargetPreviewWidget(QWidget):
             self._target_color = QColor(next_color)
             self._current_rect = QRectF(target_rect)
             self._target_rect = QRectF(target_rect)
+            self._rect_velocity = [0.0, 0.0, 0.0, 0.0]
             self._apply_rect(self._current_rect)
             self._start_fade(1.0)
             return
@@ -430,10 +554,6 @@ class TargetPreviewWidget(QWidget):
 
         if rect_changed:
             self._target_rect = QRectF(target_rect)
-            self._from_rect = QRectF(self._current_rect)
-            self._to_rect = QRectF(target_rect)
-            self._rect_t = 0.0
-            self._rect_elapsed_ms = 0
             self._is_morphing = True
 
         if color_changed:
@@ -452,10 +572,14 @@ class TargetPreviewWidget(QWidget):
             self.show()
             self.raise_()
         if not self._anim_timer.isActive():
+            self._elapsed.restart()
             self._anim_timer.start(self._frame_interval_ms)
 
     def _on_anim_tick(self):
-        dt = self._frame_interval_ms / 1000.0
+        elapsed_ms = self._elapsed.restart() if self._elapsed.isValid() else 0
+        dt = max(0.0, min(0.05, elapsed_ms / 1000.0))
+        if dt <= 0.0:
+            dt = self._frame_interval_ms / 1000.0
 
         alpha_tau = 0.036
         alpha_blend = 1.0 - math.exp(-dt / alpha_tau)
@@ -468,18 +592,39 @@ class TargetPreviewWidget(QWidget):
         self._color = lerp_color(self._color, self._target_color, color_blend)
 
         if self._is_morphing:
-            self._rect_elapsed_ms += self._frame_interval_ms
-            linear_t = min(1.0, self._rect_elapsed_ms / self._rect_duration_ms)
-            eased_t = smootherstep(linear_t)
-            self._current_rect = QRectF(
-                lerp(self._from_rect.x(), self._to_rect.x(), eased_t),
-                lerp(self._from_rect.y(), self._to_rect.y(), eased_t),
-                lerp(self._from_rect.width(), self._to_rect.width(), eased_t),
-                lerp(self._from_rect.height(), self._to_rect.height(), eased_t),
-            )
+            current_values = [
+                self._current_rect.x(),
+                self._current_rect.y(),
+                self._current_rect.width(),
+                self._current_rect.height(),
+            ]
+            target_values = [
+                self._target_rect.x(),
+                self._target_rect.y(),
+                self._target_rect.width(),
+                self._target_rect.height(),
+            ]
+            next_values = []
+            morphing = False
+            for index in range(4):
+                current, velocity = spring_update(
+                    current_values[index],
+                    target_values[index],
+                    self._rect_velocity[index],
+                    self.SPRING_STIFFNESS,
+                    self.SPRING_DAMPING,
+                    dt,
+                )
+                if spring_done(current, target_values[index], velocity, pos_eps=0.35, vel_eps=1.0):
+                    current = target_values[index]
+                    velocity = 0.0
+                else:
+                    morphing = True
+                next_values.append(current)
+                self._rect_velocity[index] = velocity
+            self._current_rect = QRectF(*next_values)
             self._apply_rect(self._current_rect)
-            if linear_t >= 1.0:
-                self._is_morphing = False
+            self._is_morphing = morphing
 
         if (
             self._opacity <= 0.01

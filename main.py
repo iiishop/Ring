@@ -274,7 +274,7 @@ def run():
         return pos.x() - center.x(), pos.y() - center.y()
 
     def update_preview(action, show_target=True):
-        overlay.set_action(action)
+        overlay.set_action_stable(action)
 
         if not show_target or action == "none":
             preview.hide_preview()
