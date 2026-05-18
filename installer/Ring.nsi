@@ -8,7 +8,7 @@ RequestExecutionLevel admin
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File "Ring.exe"
+  File "dist\Ring.exe"
 
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Ring.lnk" "$INSTDIR\Ring.exe"

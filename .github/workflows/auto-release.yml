@@ -42,7 +42,6 @@ jobs:
         run: |
           choco install nsis --no-progress
           $version = "${{ github.ref_name }}" -replace '^v', ''
-          Copy-Item dist\Ring.exe Ring.exe
           & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=$version" installer\Ring.nsi
 
       - name: Build portable zip
