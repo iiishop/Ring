@@ -42,7 +42,13 @@ jobs:
         run: |
           choco install nsis --no-progress
           $version = "${{ github.ref_name }}" -replace '^v', ''
+          Write-Host "=== dist/ contents ==="
+          Get-ChildItem dist\ -Recurse | ForEach-Object { Write-Host $_.FullName }
           Push-Location dist
+          Write-Host "=== current dir after pushd ==="
+          Get-Location
+          Write-Host "=== files in current dir ==="
+          Get-ChildItem | ForEach-Object { Write-Host $_.FullName }
           & "C:\Program Files (x86)\NSIS\makensis.exe" "/DVERSION=$version" ..\installer\Ring.nsi
           Pop-Location
 
