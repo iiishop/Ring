@@ -65,13 +65,6 @@ Ring 是一个 Windows 窗口管理小工具。按住左 Alt，屏幕上出现�
 
 ---
 
-## 截图
-
-<!-- TODO: 替换为实际截图 -->
-<!-- ![screenshot](screenshot.png) -->
-
----
-
 ## 构建
 
 ```bash
