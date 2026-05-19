@@ -8,6 +8,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/github/v/release/iiishop/Ring" alt="release">
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2B-blue" alt="platform">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license">
 </p>
 
 <!-- TODO: 替换为演示 GIF -->
