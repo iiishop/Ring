@@ -4,12 +4,12 @@ import sys
 
 import pygetwindow as gw
 from pynput import keyboard
-from PySide6.QtCore import QObject, QPoint, Qt, Signal, QTimer
-from PySide6.QtGui import QAction, QCursor, QIcon
+from PySide6.QtCore import QObject, Qt, Signal, QTimer
+from PySide6.QtGui import QCursor, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 import RECT
-from ui import LiquidOverlayWidget, TargetPreviewWidget
+from ui import LiquidOverlayWidget, TargetPreviewWidget, clamp_refresh_rate, compute_frame_interval_ms
 
 
 class POINT(ctypes.Structure):
@@ -67,7 +67,6 @@ def calculate_action(rel_x, rel_y, center_x, work_area):
     center_float_radius = 26
     maximize_radius = 48
     split_outer_near = 95
-    split_outer_far = 145
 
     if distance <= center_dead_zone:
         return "none"
@@ -209,6 +208,48 @@ def _asset_path(filename):
     return filename
 
 
+def load_trigger_key(config_path):
+    import json
+    import os
+
+    default_key = keyboard.Key.alt_l
+
+    if not os.path.isfile(config_path):
+        print(f"[Ring] 未找到配置文件 {config_path}，使用默认触发键：左 Alt")
+        return default_key
+
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        print(f"[Ring] 配置文件 {config_path} 解析失败（{exc}），使用默认触发键：左 Alt")
+        return default_key
+
+    if not isinstance(data, dict) or "trigger" not in data:
+        print(f"[Ring] 配置文件 {config_path} 缺少 trigger 字段，使用默认触发键：左 Alt")
+        return default_key
+
+    trigger = data["trigger"]
+    if not isinstance(trigger, str) or not trigger:
+        print(f"[Ring] 配置文件 {config_path} 的 trigger 字段无效，使用默认触发键：左 Alt")
+        return default_key
+
+    special_key = getattr(keyboard.Key, trigger, None)
+    if special_key is not None:
+        return special_key
+
+    if len(trigger) == 1:
+        code = keyboard.KeyCode.from_char(trigger)
+        if code is not None:
+            return code
+
+    print(
+        f"[Ring] 配置文件 {config_path} 的 trigger 值不受支持（{trigger!r}），"
+        "使用默认触发键：左 Alt"
+    )
+    return default_key
+
+
 def run():
     labels = {
         "top_right": "右上角",
@@ -226,25 +267,6 @@ def run():
         "right_two_thirds": "右 2/3",
         "maximize": "最大化",
         "center_float": "居中浮窗",
-        "none": "无变换",
-    }
-    icons = {
-        "top_right": "↗",
-        "top_half": "↑",
-        "top_left": "↖",
-        "left_half": "←",
-        "left_one_third": "←",
-        "left_two_thirds": "←",
-        "center_one_third": "↕",
-        "bottom_left": "↙",
-        "bottom_half": "↓",
-        "bottom_right": "↘",
-        "right_half": "→",
-        "right_one_third": "→",
-        "right_two_thirds": "→",
-        "maximize": "□",
-        "center_float": "◉",
-        "none": "•",
     }
 
     app = QApplication(sys.argv)
@@ -260,7 +282,7 @@ def run():
     tray.show()
 
     bridge = HotkeyBridge()
-    overlay = LiquidOverlayWidget(labels, icons)
+    overlay = LiquidOverlayWidget(labels)
     preview = TargetPreviewWidget()
 
     state = {
@@ -277,15 +299,11 @@ def run():
         if screen is None:
             screen = app.primaryScreen()
         if screen is None:
-            return 120.0
+            return clamp_refresh_rate(120.0)
         refresh_rate = screen.refreshRate()
         if refresh_rate is None or refresh_rate <= 0:
-            return 120.0
-        return float(refresh_rate)
-
-    def get_frame_interval_ms(refresh_rate):
-        clamped_hz = max(60.0, min(240.0, refresh_rate))
-        return max(4, int(round(1000.0 / clamped_hz)))
+            return clamp_refresh_rate(120.0)
+        return clamp_refresh_rate(float(refresh_rate))
 
     def rel_from_overlay_center():
         pos = mouse_pos()
@@ -317,7 +335,7 @@ def run():
 
     update_timer = QTimer()
     update_timer.setTimerType(Qt.TimerType.PreciseTimer)
-    update_timer.setInterval(get_frame_interval_ms(120.0))
+    update_timer.setInterval(compute_frame_interval_ms(clamp_refresh_rate(120.0)))
     update_timer.timeout.connect(on_update_tick)
 
     def handle_alt_press():
@@ -328,7 +346,7 @@ def run():
         state["work_area"] = get_work_area(mouse_pos())
 
         refresh_rate = get_refresh_rate_for_cursor()
-        frame_interval_ms = get_frame_interval_ms(refresh_rate)
+        frame_interval_ms = compute_frame_interval_ms(refresh_rate)
         update_timer.setInterval(frame_interval_ms)
         overlay.set_refresh_rate(refresh_rate)
         preview.set_refresh_rate(refresh_rate)
@@ -369,13 +387,17 @@ def run():
     bridge.alt_released.connect(handle_alt_release)
     bridge.alt_cancelled.connect(handle_alt_cancel)
 
+    import os
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    trigger_key = load_trigger_key(config_path)
+
     pressed_keys = set()
     alt_triggered = False
 
     def on_press(key):
         nonlocal alt_triggered
         pressed_keys.add(key)
-        if key == keyboard.Key.alt_l:
+        if key == trigger_key:
             alt_triggered = True
             if len(pressed_keys) == 1:
                 bridge.alt_pressed.emit()
@@ -385,7 +407,7 @@ def run():
     def on_release(key):
         nonlocal alt_triggered
         pressed_keys.discard(key)
-        if key == keyboard.Key.alt_l and alt_triggered:
+        if key == trigger_key and alt_triggered:
             alt_triggered = False
             bridge.alt_released.emit()
 

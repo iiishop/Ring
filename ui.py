@@ -49,15 +49,39 @@ def spring_done(current, target, velocity, pos_eps=0.01, vel_eps=0.01):
     return abs(current - target) <= pos_eps and abs(velocity) <= vel_eps
 
 
+SPRING_STIFFNESS = 200.0
+SPRING_DAMPING = 26.0
+
+
+def clamp_refresh_rate(hz):
+    """Clamp refresh rate to the allowed range [60, 240] Hz."""
+    return max(60.0, min(240.0, float(hz)))
+
+
+def compute_frame_interval_ms(hz):
+    """Compute frame interval in ms from a clamped refresh rate."""
+    return max(4, int(round(1000.0 / hz)))
+
+
+def compute_dt(elapsed, frame_interval_ms):
+    """Compute delta-time in seconds from a QElapsedTimer.
+
+    Clamps dt to (0.0, 0.05] and falls back to frame_interval_ms when the
+    timer is invalid or dt would be <= 0.
+    """
+    elapsed_ms = elapsed.restart() if elapsed.isValid() else 0
+    dt = max(0.0, min(0.05, elapsed_ms / 1000.0))
+    if dt <= 0.0:
+        dt = frame_interval_ms / 1000.0
+    return dt
+
+
 class LiquidOverlayWidget(QWidget):
     HYSTERESIS_FRAMES = 3
-    SPRING_STIFFNESS = 200.0
-    SPRING_DAMPING = 26.0
 
-    def __init__(self, labels, icons):
+    def __init__(self, labels):
         super().__init__()
         self.labels = labels
-        self.icons = icons
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -214,8 +238,8 @@ class LiquidOverlayWidget(QWidget):
             self.set_action(action)
 
     def set_refresh_rate(self, hz):
-        clamped_hz = max(60.0, min(240.0, float(hz)))
-        self._frame_interval_ms = max(4, int(round(1000.0 / clamped_hz)))
+        clamped_hz = clamp_refresh_rate(hz)
+        self._frame_interval_ms = compute_frame_interval_ms(clamped_hz)
         if self._refresh_timer.isActive():
             self._refresh_timer.start(self._frame_interval_ms)
 
@@ -256,8 +280,8 @@ class LiquidOverlayWidget(QWidget):
                 current,
                 target,
                 velocity,
-                self.SPRING_STIFFNESS,
-                self.SPRING_DAMPING,
+                SPRING_STIFFNESS,
+                SPRING_DAMPING,
                 dt,
             )
             if spring_done(current, target, velocity, pos_eps=0.35, vel_eps=1.0):
@@ -280,8 +304,8 @@ class LiquidOverlayWidget(QWidget):
             self._angle,
             angle_target,
             self._angle_velocity,
-            self.SPRING_STIFFNESS,
-            self.SPRING_DAMPING,
+            SPRING_STIFFNESS,
+            SPRING_DAMPING,
             dt,
         )
         if spring_done(
@@ -315,8 +339,8 @@ class LiquidOverlayWidget(QWidget):
                 rect_values[index],
                 target_values[index],
                 self._marker_rect_velocity[index],
-                self.SPRING_STIFFNESS,
-                self.SPRING_DAMPING,
+                SPRING_STIFFNESS,
+                SPRING_DAMPING,
                 dt,
             )
             if spring_done(current, target_values[index], velocity, pos_eps=0.2, vel_eps=0.5):
@@ -332,8 +356,8 @@ class LiquidOverlayWidget(QWidget):
             self._marker_visible,
             self._marker_visible_target,
             self._marker_visible_velocity,
-            self.SPRING_STIFFNESS,
-            self.SPRING_DAMPING,
+            SPRING_STIFFNESS,
+            SPRING_DAMPING,
             dt,
         )
         if spring_done(
@@ -351,10 +375,7 @@ class LiquidOverlayWidget(QWidget):
         return active
 
     def _on_refresh_tick(self):
-        elapsed_ms = self._elapsed.restart() if self._elapsed.isValid() else 0
-        dt = max(0.0, min(0.05, elapsed_ms / 1000.0))
-        if dt <= 0.0:
-            dt = self._frame_interval_ms / 1000.0
+        dt = compute_dt(self._elapsed, self._frame_interval_ms)
 
         needs_update = False
 
@@ -485,8 +506,6 @@ class LiquidOverlayWidget(QWidget):
 
 
 class TargetPreviewWidget(QWidget):
-    SPRING_STIFFNESS = 200.0
-    SPRING_DAMPING = 26.0
 
     def __init__(self):
         super().__init__()
@@ -517,8 +536,8 @@ class TargetPreviewWidget(QWidget):
         self.hide()
 
     def set_refresh_rate(self, hz):
-        clamped_hz = max(60.0, min(240.0, float(hz)))
-        self._frame_interval_ms = max(4, int(round(1000.0 / clamped_hz)))
+        clamped_hz = clamp_refresh_rate(hz)
+        self._frame_interval_ms = compute_frame_interval_ms(clamped_hz)
         if self._anim_timer.isActive():
             self._anim_timer.start(self._frame_interval_ms)
 
@@ -576,10 +595,7 @@ class TargetPreviewWidget(QWidget):
             self._anim_timer.start(self._frame_interval_ms)
 
     def _on_anim_tick(self):
-        elapsed_ms = self._elapsed.restart() if self._elapsed.isValid() else 0
-        dt = max(0.0, min(0.05, elapsed_ms / 1000.0))
-        if dt <= 0.0:
-            dt = self._frame_interval_ms / 1000.0
+        dt = compute_dt(self._elapsed, self._frame_interval_ms)
 
         alpha_tau = 0.036
         alpha_blend = 1.0 - math.exp(-dt / alpha_tau)
@@ -611,8 +627,8 @@ class TargetPreviewWidget(QWidget):
                     current_values[index],
                     target_values[index],
                     self._rect_velocity[index],
-                    self.SPRING_STIFFNESS,
-                    self.SPRING_DAMPING,
+                    SPRING_STIFFNESS,
+                    SPRING_DAMPING,
                     dt,
                 )
                 if spring_done(current, target_values[index], velocity, pos_eps=0.35, vel_eps=1.0):

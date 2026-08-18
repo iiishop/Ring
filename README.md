@@ -55,6 +55,29 @@ Ring 是一个 Windows 窗口管理小工具。按住左 Alt，屏幕上出现�
 
 ---
 
+## 配置触发键
+
+默认触发键为**左 Alt**。如需更换，可在项目根目录的 `config.json` 中配置 `trigger` 字段：
+
+```json
+{"trigger":"alt_l"}
+```
+
+`trigger` 支持两种形式：
+
+- **pynput 常用特殊键名称**：如 `alt_l`、`alt_r`、`ctrl_l`、`ctrl_r`、`shift_l`、`shift_r`、`space`、`enter`、`tab`、`esc`、`backspace`、`caps_lock` 等
+- **普通单字符键**：如 `"a"`、`"b"`、`"1"` 等
+
+例如配置为普通按键 `a`：
+
+```json
+{"trigger":"a"}
+```
+
+> 修改 `config.json` 后需**重启程序**才能生效。若配置文件缺失、内容无效或 `trigger` 值不受支持，程序会安全回退到默认的左 Alt 并输出提示。
+
+---
+
 ## 特性
 
 - 14 种窗口布局，覆盖半屏、三分屏、角落、浮窗、最大化
